@@ -1,0 +1,30 @@
+# Core Data
+pandas
+numpy
+pyarrow
+fastparquet
+
+# ML - Model 1
+scikit-learn
+xgboost
+torch
+torchvision
+
+# Experiment Tracking
+mlflow
+
+# Explainability
+shap
+
+# Visualization / EDA
+matplotlib
+seaborn
+plotly
+
+# API Serving
+fastapi
+uvicorn
+
+# Notebook
+jupyter
+ipykernel

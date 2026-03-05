@@ -1,0 +1,38 @@
+# configs/config.yaml
+
+paths:
+  raw_data: "data/raw/P2P_Macro_Data.dta"
+  processed_data: "data/processed/features.parquet"
+  outputs: "data/outputs/"
+
+target: "badloan"
+
+model:
+  test_size: 0.2
+  random_state: 42
+  cv_folds: 5
+
+xgboost:
+  n_estimators: 500
+  max_depth: 6
+  learning_rate: 0.05
+  scale_pos_weight: 11.47  # 92/8 class imbalance ratio
+
+features:
+  drop_leakage:
+    - total_pymnt
+    - total_pymnt_inv
+    - total_rec_prncp
+    - total_rec_int
+    - total_rec_late_fee
+    - recoveries
+    - collection_recovery_fee
+    - out_prncp
+    - out_prncp_inv
+    - last_pymnt_amnt
+    - last_pymnt_d
+    - next_pymnt_d
+    - loan_status
+    - loan_status_
+    - loan_status_5
+    - rankloan_status_
