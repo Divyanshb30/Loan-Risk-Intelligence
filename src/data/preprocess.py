@@ -3,17 +3,22 @@ import numpy as np
 import yaml
 import os
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
 
 def load_config(config_path: str = "configs/config.yaml") -> dict:
-    with open(config_path, "r") as f:
+    path = PROJECT_ROOT / config_path
+    with open(path, "r") as f:
         return yaml.safe_load(f)
 
 
 def load_raw_data(path: str) -> pd.DataFrame:
+    path = str(PROJECT_ROOT / path)
     parquet_path = path.replace(".dta", ".parquet")
     
     if os.path.exists(parquet_path):
@@ -137,7 +142,7 @@ def run_preprocessing(config_path: str = "configs/config.yaml") -> pd.DataFrame:
     config = load_config(config_path)
     
     # Create logs directory if it doesn't exist
-    Path("logs").mkdir(exist_ok=True)
+    (PROJECT_ROOT / "logs").mkdir(exist_ok=True)
 
     logger.info("="*50)
     logger.info("PREPROCESSING PIPELINE STARTED")
@@ -156,8 +161,8 @@ def run_preprocessing(config_path: str = "configs/config.yaml") -> pd.DataFrame:
     logger.info(f"Target distribution: {df['badloan'].value_counts(normalize=True).round(3).to_dict()}")
     logger.info("="*50)
 
-    output_path = config["paths"]["processed_data"]
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    output_path = PROJECT_ROOT / config["paths"]["processed_data"]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(output_path, index=False)
     logger.info(f"Saved processed data to {output_path}")
 

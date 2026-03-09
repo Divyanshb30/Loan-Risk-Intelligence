@@ -2,8 +2,10 @@ import logging
 import sys
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-def get_logger(name: str, log_dir: str = "logs") -> logging.Logger:
+
+def get_logger(name: str, log_dir: str = str(PROJECT_ROOT / "logs")) -> logging.Logger:
     """
     Returns a configured logger for any module.
     

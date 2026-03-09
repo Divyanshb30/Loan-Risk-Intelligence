@@ -36,3 +36,10 @@ features:
     - loan_status_
     - loan_status_5
     - rankloan_status_
+  interaction_features:
+    - dti_x_unemployment
+    - real_interest_rate
+    - loan_to_income
+    - util_x_delinq
+    - fed_x_term
+
