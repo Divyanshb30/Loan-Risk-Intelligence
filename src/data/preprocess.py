@@ -9,13 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
-
-
-def load_config(config_path: str = "configs/config.yaml") -> dict:
-    path = PROJECT_ROOT / config_path
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
-
+from src.utils.config import load_config
 
 def load_raw_data(path: str) -> pd.DataFrame:
     path = str(PROJECT_ROOT / path)

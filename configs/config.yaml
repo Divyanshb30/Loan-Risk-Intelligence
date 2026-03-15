@@ -16,7 +16,12 @@ xgboost:
   n_estimators: 500
   max_depth: 6
   learning_rate: 0.05
-  scale_pos_weight: 11.47  # 92/8 class imbalance ratio
+  subsample: 0.8
+  colsample_bytree: 0.8
+  min_child_weight: 5
+  gamma: 0.1
+  reg_alpha: 0.1
+  reg_lambda: 1.0
 
 features:
   drop_leakage:
@@ -42,4 +47,4 @@ features:
     - loan_to_income
     - util_x_delinq
     - fed_x_term
-
+  
