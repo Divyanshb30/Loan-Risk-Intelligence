@@ -198,7 +198,7 @@ def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series,
         "random_state":     config["model"]["random_state"],
         "n_jobs":           -1,
         "tree_method":      "hist",   # fastest for large datasets
-        "device":           "cpu",
+        "device":           "cuda",
     }
     
     mlflow.set_experiment("LoanRiskIQ_XGBoost")

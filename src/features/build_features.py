@@ -48,23 +48,27 @@ BORROWER_FEATURES = [
 ]
 
 MACRO_FEATURES = [
-    'logearnings',
-    'logunemployment',
+    # Residualized versions — cross-sectional signal only
+    'muni_6m_resid',
+    'FED_lag6_resid',
+    'CPIUS_resid',
+    'FEDFUNDS_resid',
+    'inf_resid',
+    'inf_6m_resid',
+    'muni_points_resid',
+    'riskprem_resid',
+    'cpi_resid',
+    'logunemployment_resid',
+    'logearnings_resid',
+    'gdpcontrib_resid',
+    
+    # These are cross-sectional by nature — no residualization needed
     'loglabor_force',
     'logempl_birth',
     'lognew_bus',
-    'gdpcontrib',
     'loginternetuser',
-    'inf',
-    'inf_6m',
-    'muni_points',
-    'muni_6m',
-    'FEDFUNDS',
-    'FED_lag6',
-    'riskprem',
-    'CPIUS',
-    'cpi',
 ]
+
 
 CATEGORICAL_FEATURES = [
     'grade_',
@@ -134,9 +138,12 @@ def engineer_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     Five interaction features encoding combined risk mechanisms.
     Each has an explicit business justification.
     """
-    if 'logdti' in df.columns and 'logunemployment' in df.columns:
-        df['dti_x_unemployment'] = df['logdti'] * df['logunemployment']
-        logger.info("Created: dti_x_unemployment")
+    # Use residualized unemployment if available, fall back to raw
+    unem_col = 'logunemployment_resid' if 'logunemployment_resid' in df.columns else 'logunemployment'
+    
+    if 'logdti' in df.columns and unem_col in df.columns:
+        df['dti_x_unemployment'] = df['logdti'] * df[unem_col]
+        logger.info(f"Created: dti_x_unemployment (using {unem_col})")
 
     if 'int_rate' in df.columns and 'inf' in df.columns:
         df['real_interest_rate'] = df['int_rate'] - df['inf']
@@ -218,26 +225,64 @@ def select_final_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
 
     return X, y
 
+def residualize_macro_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove time trend from macro features by subtracting the 
+    period mean (grouped by issue_year + month).
+    
+    Raw macro value = time trend (regime) + cross-sectional signal
+    After residualization, only cross-sectional signal remains.
+    
+    Example: logunemployment_resid for a California borrower in Jan 2013
+    = California unemployment - national average unemployment in Jan 2013
+    = "Is California worse than average RIGHT NOW?"
+    
+    This prevents the model from using macro features as time proxies.
+    """
+    
+    # These are the macro features with strong time trends
+    macro_to_residualize = [
+        'muni_6m', 'FED_lag6', 'CPIUS', 'FEDFUNDS',
+        'inf', 'inf_6m', 'muni_points', 'riskprem',
+        'cpi', 'logunemployment', 'logearnings', 'gdpcontrib'
+    ]
+    
+    # Group by year+month to get the period average
+    if 'issue_year' not in df.columns or 'month' not in df.columns:
+        logger.warning("issue_year or month missing — skipping residualization")
+        return df
+    
+    period_group = df.groupby(['issue_year', 'month'])
+    
+    for col in macro_to_residualize:
+        if col not in df.columns:
+            continue
+        
+        period_mean = period_group[col].transform('mean')
+        resid_col = f"{col}_resid"
+        df[resid_col] = df[col] - period_mean
+        logger.info(f"Residualized: {col} -> {resid_col}")
+    
+    return df
 
 def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    """Master function — runs full feature engineering pipeline in order."""
-
     logger.info("=" * 50)
     logger.info("FEATURE ENGINEERING STARTED")
     logger.info("=" * 50)
 
     logger.info("Step 1: Encoding categorical + borrower categorical features")
     df = encode_categoricals(df, ALL_ENCODE_FEATURES)
-    # ↑ KEY FIX: includes emp_length_, home_ownership_, verification_status_
-    # These live in BORROWER_FEATURES but are categorical — must be encoded here
 
-    logger.info("Step 2: Engineering interaction features")
+    logger.info("Step 2: Residualizing macro features against time")
+    df = residualize_macro_features(df)
+
+    logger.info("Step 3: Engineering interaction features")
     df = engineer_interaction_features(df)
 
-    logger.info("Step 3: Selecting final feature matrix")
+    logger.info("Step 4: Selecting final feature matrix")
     X, y = select_final_features(df)
 
-    logger.info("Step 4: Enforcing numeric dtypes — final safety check")
+    logger.info("Step 5: Enforcing numeric dtypes")
     X = enforce_numeric_dtypes(X)
 
     logger.info(f"Feature matrix shape: {X.shape}")
@@ -245,3 +290,6 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     logger.info("FEATURE ENGINEERING COMPLETE")
 
     return X, y
+
+
+

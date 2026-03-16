@@ -23,6 +23,14 @@ xgboost:
   reg_alpha: 0.1
   reg_lambda: 1.0
 
+nn:
+  batch_size: 4096      # large batch — RTX 3060 can handle this comfortably
+  epochs: 30
+  learning_rate: 0.001
+  dropout: 0.3
+  patience: 5           # stop if no AUC improvement for 5 epochs
+  weight_decay: 0.0001
+
 features:
   drop_leakage:
     - total_pymnt
