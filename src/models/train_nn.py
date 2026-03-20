@@ -34,6 +34,100 @@ def get_device() -> torch.device:
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
 
+class ResidualBlock(nn.Module):
+    """
+    Residual (skip) connection block.
+    
+    Why residual connections for tabular NNs:
+    In deep networks, gradients vanish as they propagate back through
+    many layers — earlier layers get almost zero gradient signal and
+    stop learning. Residual connections create a shortcut that lets
+    gradients flow directly from output to earlier layers.
+    
+    x → Linear → BN → GELU → Dropout → + x → output
+    ↑_____________________________________|
+    
+    The + x is the skip connection. If the block learns nothing useful,
+    the skip connection ensures output = input (identity mapping).
+    This makes it safe to add more layers — worst case they do nothing.
+    Used in ResNet (images), Transformer (attention layers), 
+    and now proven effective for tabular data too.
+    """
+    def __init__(self, dim: int, dropout: float):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.BatchNorm1d(dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim, dim),
+            nn.BatchNorm1d(dim),
+        )
+        self.activation = nn.GELU()
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        return self.dropout(self.activation(x + self.block(x)))
+
+
+class LoanRiskNN(nn.Module):
+    """
+    Deep tabular NN with residual connections.
+    Architecture: 62 -> 256 -> ResBlock(256) -> 128 -> ResBlock(128) -> 64 -> 1
+    """
+    def __init__(self, input_dim: int, dropout: float = 0.2):
+        super().__init__()
+
+        self.input_norm = nn.BatchNorm1d(input_dim)
+
+        # Initial projection to hidden dimension
+        self.input_proj = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.BatchNorm1d(256),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+
+        # Residual blocks at same dimension
+        self.res_block1 = ResidualBlock(256, dropout)
+
+        # Compress
+        self.compress1 = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+
+        self.res_block2 = ResidualBlock(128, dropout)
+
+        # Final compression
+        self.compress2 = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+
+        self.output = nn.Linear(64, 1)
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.kaiming_normal_(module.weight, nonlinearity='relu')
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    def forward(self, x):
+        x = self.input_norm(x)
+        x = self.input_proj(x)
+        x = self.res_block1(x)
+        x = self.compress1(x)
+        x = self.res_block2(x)
+        x = self.compress2(x)
+        return self.output(x).squeeze(1)
+
 class LoanDataset(Dataset):
     """
     PyTorch Dataset wrapping feature matrix and target vector.
@@ -140,17 +234,23 @@ class LoanRiskNN(nn.Module):
 
 # ── Training Loop ─────────────────────────────────────────────────────────────
 
-def compute_pos_weight(y: np.ndarray) -> torch.Tensor:
+def compute_pos_weight(y: np.ndarray, cap: float = 5.0) -> torch.Tensor:
     """
-    BCEWithLogitsLoss pos_weight: same concept as XGBoost's scale_pos_weight.
-    Tells the loss function to weight positive (bad loan) examples more heavily.
-    At 92/8 split: pos_weight = 92/8 = 11.5
-    Each bad loan contributes 11.5x more to the loss than a good loan.
+    Cap pos_weight to prevent over-aggressive minority class weighting.
+    
+    Why cap at 5.0:
+    The raw 92/8 ratio gives pos_weight=11.5. But this pushes the model
+    to predict positive so aggressively that it hurts precision badly.
+    A cap of 5.0 says "treat each bad loan as 5 good loans" — still
+    strong signal but not overwhelming the gradient.
+    This is a deliberate calibration tradeoff: slightly lower recall,
+    much better precision and AUC.
     """
     neg = (y == 0).sum()
     pos = (y == 1).sum()
-    pw = neg / pos
-    logger.info(f"pos_weight: {pw:.4f}")
+    raw_pw = neg / pos
+    pw = min(raw_pw, cap)
+    logger.info(f"pos_weight: {raw_pw:.4f} (raw) -> {pw:.4f} (capped at {cap})")
     return torch.tensor([pw], dtype=torch.float32)
 
 
@@ -202,12 +302,24 @@ def train_nn(X_train: np.ndarray, y_train: np.ndarray,
         pin_memory=True
     )
 
+    train_eval_size = int(len(train_ds) * 0.2)
+    train_eval_ds   = torch.utils.data.Subset(
+        train_ds,
+        indices=np.random.choice(len(train_ds), train_eval_size, replace=False)
+    )
+    train_loader_eval = DataLoader(
+        train_eval_ds, batch_size=batch_size * 2,
+        shuffle=False, num_workers=4, pin_memory=True
+    )
+
     # ── Model, Loss, Optimizer ────────────────────────────────────────────────
     input_dim  = X_train.shape[1]
     model      = LoanRiskNN(input_dim, dropout=dropout).to(device)
 
-    pos_weight = compute_pos_weight(y_train).to(device)
-    criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    criterion = FocalLoss(
+        alpha=config["nn"].get("focal_alpha", 0.25),
+        gamma=config["nn"].get("focal_gamma", 2.0)
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=lr,
@@ -219,8 +331,10 @@ def train_nn(X_train: np.ndarray, y_train: np.ndarray,
     # Patience=3 means: wait 3 epochs of no improvement before reducing
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5,
-        patience=3, min_lr=1e-6
+        patience=config["nn"].get("scheduler_patience", 6),
+        min_lr=1e-6
     )
+
 
     # ── Training ──────────────────────────────────────────────────────────────
     mlflow.set_experiment("LoanRiskIQ_NN")
@@ -267,19 +381,21 @@ def train_nn(X_train: np.ndarray, y_train: np.ndarray,
             val_auc_pr  = average_precision_score(y_true, y_prob)
             val_brier   = brier_score_loss(y_true, y_prob)
 
+            train_auc, _, _ = evaluate_epoch(model, train_loader_eval, device)
             scheduler.step(val_auc)
 
             current_lr = optimizer.param_groups[0]['lr']
+            current_lr = optimizer.param_groups[0]['lr']
             logger.info(
                 f"Epoch {epoch:03d} | Loss: {avg_loss:.4f} | "
-                f"AUC-ROC: {val_auc:.4f} | AUC-PR: {val_auc_pr:.4f} | "
-                f"Brier: {val_brier:.4f} | LR: {current_lr:.2e}"
+                f"Train AUC: {train_auc:.4f} | Test AUC: {val_auc:.4f} | "   # changed
+                f"AUC-PR: {val_auc_pr:.4f} | Brier: {val_brier:.4f} | LR: {current_lr:.2e}"
             )
 
             mlflow.log_metrics({
-                "train_loss": avg_loss, "val_auc_roc": val_auc,
-                "val_auc_pr": val_auc_pr, "val_brier": val_brier,
-                "learning_rate": current_lr
+                "train_loss": avg_loss, "train_auc_roc": train_auc,  # added train_auc_roc
+                "val_auc_roc": val_auc, "val_auc_pr": val_auc_pr,
+                "val_brier": val_brier, "learning_rate": current_lr
             }, step=epoch)
 
             # ── Early stopping + checkpoint ───────────────────────────────────
@@ -328,38 +444,54 @@ def train_nn(X_train: np.ndarray, y_train: np.ndarray,
 
 
 def run_nn_training(config_path: str = "configs/config.yaml"):
-    """Entry point — loads splits from XGBoost run, scales, trains NN."""
-    from src.features.build_features import build_features
-
     config     = load_config(config_path)
     device     = get_device()
     output_dir = Path(get_project_root()) / config["paths"]["outputs"]
 
-    logger.info("Loading train/test splits from XGBoost run...")
-    X_train = pd.read_parquet(output_dir / "X_train.parquet").values
-    X_test  = pd.read_parquet(output_dir / "X_test.parquet").values
+    logger.info("Loading train/test splits...")
+    X_train = pd.read_parquet(output_dir / "X_train.parquet")
+    X_test  = pd.read_parquet(output_dir / "X_test.parquet")
     y_train = pd.read_parquet(output_dir / "y_train.parquet").values.ravel()
     y_test  = pd.read_parquet(output_dir / "y_test.parquet").values.ravel()
 
-    # ── Scale features ────────────────────────────────────────────────────────
-    # NNs require standardized inputs — gradient descent converges much
-    # faster when all features are on the same scale (~mean 0, std 1).
-    # XGBoost doesn't need this (tree splits are scale-invariant).
-    # Fit ONLY on train data — never fit on test (data leakage).
-    logger.info("Scaling features...")
-    scaler  = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test  = scaler.transform(X_test)
+    # Load XGBoost predictions
+    xgb_oof  = np.load(output_dir / "xgb_oof_predictions.npy")   # train set
+    xgb_test = pd.read_parquet(
+        output_dir / "xgb_predictions.parquet"
+    )["y_prob_xgb"].values                                         # test set
 
-    # Save scaler for inference
-    import joblib
+    # Convert XGB probabilities to log-odds (logit scale)
+    # Neural networks work in logit space — this is the natural 
+    # representation for the NN to learn from
+    eps = 1e-7
+    def safe_logit(p):
+        p = np.clip(p, eps, 1 - eps)
+        return np.log(p / (1 - p))
+
+    xgb_oof_logit  = safe_logit(xgb_oof).reshape(-1, 1)
+    xgb_test_logit = safe_logit(xgb_test).reshape(-1, 1)
+
+    # Scale raw features (fit only on train)
+    logger.info("Scaling features...")
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train.values)
+    X_test_scaled  = scaler.transform(X_test.values)
     joblib.dump(scaler, output_dir / "scaler.joblib")
-    logger.info("Scaler saved")
+
+    # Stack XGB logit as last column
+    # input_dim is now 63 (62 features + 1 XGB logit)
+    X_train_final = np.hstack([X_train_scaled, xgb_oof_logit])
+    X_test_final  = np.hstack([X_test_scaled,  xgb_test_logit])
+
+    logger.info(f"Final input shape: {X_train_final.shape}")
+    logger.info(f"XGB OOF logit range: "
+                f"[{xgb_oof_logit.min():.2f}, {xgb_oof_logit.max():.2f}]")
 
     model, y_prob = train_nn(
-        X_train, y_train, X_test, y_test, config, device
+        X_train_final, y_train,
+        X_test_final,  y_test,
+        config, device
     )
-
     return model, y_prob
 
 

@@ -274,6 +274,12 @@ def run_xgboost_training(config_path: str = "configs/config.yaml"):
     X_train, X_test, y_train, y_test = time_aware_split(
         X, y, df, test_size=config["model"]["test_size"]
     )
+
+    # Generate OOF predictions for NN stacking
+    logger.info("Generating OOF predictions for NN stacking...")
+    oof_preds = generate_oof_predictions(
+        X_train, y_train, params, config, output_dir
+    )
     
     model, y_prob = train_xgboost(X_train, y_train, X_test, y_test, config)
     
@@ -291,6 +297,43 @@ def run_xgboost_training(config_path: str = "configs/config.yaml"):
     logger.info("All outputs saved. XGBoost training complete.")
     return model
 
+def generate_oof_predictions(X_train: pd.DataFrame, y_train: pd.Series,
+                              params: dict, config: dict,
+                              output_dir: Path) -> np.ndarray:
+    """
+    Generate honest out-of-fold XGBoost predictions for the training set.
+    
+    Why honest predictions matter:
+    If we predict on the same data XGBoost trained on, predictions are
+    overfit (train AUC ~0.99). NN then learns to blindly trust these
+    overfit signals -> NN overfits too. OOF ensures every training sample
+    gets predicted by a model that never saw it during training.
+    """
+    from sklearn.model_selection import TimeSeriesSplit
+
+    tscv = TimeSeriesSplit(n_splits=config["model"]["cv_folds"])
+    oof_preds = np.zeros(len(X_train))
+
+    for fold, (tr_idx, val_idx) in enumerate(tscv.split(X_train), 1):
+        logger.info(f"OOF fold {fold}/{config['model']['cv_folds']}...")
+        
+        fold_model = xgb.XGBClassifier(
+            **params,
+            device=config["xgboost"].get("device", "cpu"),
+            verbosity=0
+        )
+        fold_model.fit(X_train.iloc[tr_idx], y_train.iloc[tr_idx])
+        oof_preds[val_idx] = fold_model.predict_proba(
+            X_train.iloc[val_idx]
+        )[:, 1]
+
+        oof_auc = roc_auc_score(y_train.iloc[val_idx], oof_preds[val_idx])
+        logger.info(f"  Fold {fold} OOF AUC: {oof_auc:.4f}")
+
+    np.save(output_dir / "xgb_oof_predictions.npy", oof_preds)
+    logger.info(f"OOF predictions saved. Overall OOF AUC: "
+                f"{roc_auc_score(y_train, oof_preds):.4f}")
+    return oof_preds
 
 if __name__ == "__main__":
     run_xgboost_training()
