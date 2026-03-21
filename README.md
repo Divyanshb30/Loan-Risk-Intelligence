@@ -126,22 +126,35 @@ environments where both low and high default-rate regimes recur.
 ## Project Structure
 
 ```
-lending-club-risk/
-├── config.yaml                    ← hyperparameters, paths, split config
+Loan-Risk-Intelligence/
+├── configs/
+│   └── config.yaml                ← hyperparameters, paths, split config
 ├── notebooks/
-│   └── main.ipynb                 ← end-to-end pipeline
+│   ├── 01_eda.ipynb               ← EDA, regime analysis, macro residualization
+│   └── 02_training.ipynb          ← OOF generation + XGBoost + NN training
 ├── src/
 │   ├── data/
-│   │   └── preprocess.py
+│   │   └── preprocess.py          ← raw .dta → clean parquet pipeline
 │   ├── features/
-│   │   └── build_features.py
+│   │   └── build_features.py      ← feature engineering, macro residualization
 │   ├── models/
-│   │   ├── train_xgboost.py
-│   │   └── train_nn.py
+│   │   ├── train_xgboost.py       ← XGBoost + 5-fold OOF + MLflow tracking
+│   │   └── train_nn.py            ← Residual NN + stacking + focal loss
+│   ├── api/                       ← FastAPI inference endpoint (in progress)
+│   ├── explainability/            ← SHAP beeswarm + waterfall (in progress)
 │   └── utils/
-│       └── config.py
-├── output/                        ← model outputs (gitignored)
-└── models/                        ← saved weights (gitignored)
+│       ├── config.py              ← load_config, get_project_root
+│       └── logger.py              ← structured logging setup
+├── model2_llm/                    ← Phase 2: Qwen 2.5 + LoRA (in progress)
+├── tests/                         ← unit tests (in progress)
+├── data/
+│   ├── raw/                       ← P2P_Macro_Data.dta (gitignored)
+│   ├── processed/                 ← features.parquet (gitignored)
+│   └── outputs/                   ← model weights, predictions, scaler (gitignored)
+├── logs/                          ← training logs
+├── mlruns/                        ← MLflow experiment tracking
+├── requirement.txt
+└── README.md
 ```
 
 ---
