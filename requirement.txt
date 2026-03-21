@@ -30,3 +30,5 @@ jupyter
 ipykernel
 
 streamlit
+python-dotenv
+openai
