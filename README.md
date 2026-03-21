@@ -1,4 +1,3 @@
-'''
 # Loan Risk Intelligence System
 A production-grade, two-stage credit risk prediction system trained on 1.8M real-world
 loan records. Predicts default probability, quantifies macroeconomic risk drivers via
