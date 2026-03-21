@@ -1,4 +1,5 @@
-'''# Loan Risk Intelligence System
+'''
+# Loan Risk Intelligence System
 A production-grade, two-stage credit risk prediction system trained on 1.8M real-world
 loan records. Predicts default probability, quantifies macroeconomic risk drivers via
 residualized macro signals, and serves predictions through a REST API with
