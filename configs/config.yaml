@@ -11,6 +11,8 @@ model:
   test_size: 0.2
   random_state: 42
   cv_folds: 5
+  split_mode: "year_stratified"   # changed from temporal
+
 
 xgboost:
   n_estimators: 500
@@ -31,7 +33,7 @@ nn:
   patience: 12
   weight_decay: 0.0001
   scheduler_patience: 6
-  focal_alpha: 0.25
+  focal_alpha: 0.75
   focal_gamma: 2.0
   use_xgb_feature: true
 

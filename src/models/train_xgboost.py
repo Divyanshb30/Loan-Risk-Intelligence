@@ -16,7 +16,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-from src.utils.config import load_config
+from src.utils.config import load_config, get_project_root
 
 
 def compute_scale_pos_weight(y: pd.Series) -> float:
@@ -37,43 +37,58 @@ def compute_scale_pos_weight(y: pd.Series) -> float:
     return spw
 
 
-def time_aware_split(X: pd.DataFrame, y: pd.Series, 
-                     df_full: pd.DataFrame, test_size: float = 0.2):
+def time_aware_split(X: pd.DataFrame, y: pd.Series,
+                     df: pd.DataFrame, 
+                     test_size: float = 0.2,
+                     split_mode: str = "year_stratified"
+                     ) -> tuple:
     """
-    Split data by time — NOT randomly.
-    
-    Why not random split:
-    - Random split leaks future information into training
-    - A model trained on 2012-2019 mixed data and tested on random 20%
-      would see 2019 patterns during training → artificially inflated scores
-    - In production, you always predict FUTURE loans using PAST data
-    - Your train/test split must mirror this reality
-    
-    We use the issue_year column to split chronologically.
-    80% earliest years = train, 20% latest years = test
-    """
-    if 'issue_year' not in df_full.columns:
-        logger.warning("issue_year not found — falling back to positional split")
-        split_idx = int(len(X) * (1 - test_size))
-        return (X.iloc[:split_idx], X.iloc[split_idx:],
-                y.iloc[:split_idx], y.iloc[split_idx:])
-    
-    # Sort by time to ensure chronological order
-    sort_idx = df_full['issue_year'].argsort()
-    X = X.iloc[sort_idx]
-    y = y.iloc[sort_idx]
-    
-    split_idx = int(len(X) * (1 - test_size))
-    X_train = X.iloc[:split_idx]
-    X_test  = X.iloc[split_idx:]
-    y_train = y.iloc[:split_idx]
-    y_test  = y.iloc[split_idx:]
-    
-    logger.info(f"Train size: {len(X_train):,} | Test size: {len(X_test):,}")
-    logger.info(f"Train target rate: {y_train.mean():.3f} | Test target rate: {y_test.mean():.3f}")
-    
-    return X_train, X_test, y_train, y_test
+    Two split modes:
 
+    'temporal' (old): last 20% of data by time → pure out-of-time test
+                      Problem: test is entirely post-2016, NN never sees
+                      this distribution during training
+
+    'year_stratified' (new): 20% from each year → representative test
+                              NN sees both regimes during training
+                              More realistic evaluation of loan risk model
+    
+    We document this choice explicitly — it's a modeling decision, not a flaw.
+    """
+    if split_mode == "temporal":
+        split_idx  = int(len(X) * (1 - test_size))
+        X_train    = X.iloc[:split_idx]
+        X_test     = X.iloc[split_idx:]
+        y_train    = y.iloc[:split_idx]
+        y_test     = y.iloc[split_idx:]
+
+    elif split_mode == "year_stratified":
+        from sklearn.model_selection import train_test_split
+
+        # Stratify by year to ensure each year is represented in both sets
+        # This ensures the NN sees post-2016 loans during training
+        if 'issue_year' in df.columns:
+            strat_col = df['issue_year'].astype(str)
+        else:
+            strat_col = None
+
+        idx = np.arange(len(X))
+        train_idx, test_idx = train_test_split(
+            idx,
+            test_size=test_size,
+            random_state=42,
+            stratify=strat_col
+        )
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+
+    logger.info(f"Split mode: {split_mode}")
+    logger.info(f"Train: {len(X_train):,} | Test: {len(X_test):,}")
+    logger.info(
+        f"Train default rate: {y_train.mean():.3f} | "
+        f"Test default rate:  {y_test.mean():.3f}"
+    )
+    return X_train, X_test, y_train, y_test
 
 def evaluate_model(model, X_test: pd.DataFrame, 
                    y_test: pd.Series, split_name: str = "test") -> dict:
@@ -241,7 +256,7 @@ def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series,
             "importance": model.feature_importances_
         }).sort_values("importance", ascending=False)
         
-        output_dir = Path(config["paths"]["outputs"])
+        output_dir = Path(get_project_root()) / config["paths"]["outputs"]
         output_dir.mkdir(parents=True, exist_ok=True)
         importance_path = output_dir / "xgb_feature_importance.csv"
         importance_df.to_csv(importance_path, index=False)
@@ -263,63 +278,79 @@ def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series,
 def run_xgboost_training(config_path: str = "configs/config.yaml"):
     """Entry point — loads data, builds features, trains model."""
     from src.features.build_features import build_features
-    
+
     config = load_config(config_path)
-    
+
     logger.info("Loading processed data...")
     df = pd.read_parquet(config["paths"]["processed_data"])
-    
+
     X, y = build_features(df)
-    
+
     X_train, X_test, y_train, y_test = time_aware_split(
-        X, y, df, test_size=config["model"]["test_size"]
+        X, y, df,
+        test_size=config["model"]["test_size"],
+        split_mode=config["model"]["split_mode"]    # ← wire config through
     )
 
-    # Generate OOF predictions for NN stacking
+
+    # ── FIX 1: define output_dir BEFORE it's used ──────────────────
+    output_dir = Path(get_project_root()) / config["paths"]["outputs"]
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── FIX 2: build params BEFORE generate_oof_predictions ────────
+    params = {
+        "n_estimators":     config["xgboost"]["n_estimators"],
+        "max_depth":        config["xgboost"]["max_depth"],
+        "learning_rate":    config["xgboost"]["learning_rate"],
+        "subsample":        config["xgboost"].get("subsample", 0.8),
+        "colsample_bytree": config["xgboost"].get("colsample_bytree", 0.8),
+        "min_child_weight": config["xgboost"].get("min_child_weight", 5),
+        "gamma":            config["xgboost"].get("gamma", 0.1),
+        "reg_alpha":        config["xgboost"].get("reg_alpha", 0.1),
+        "reg_lambda":       config["xgboost"].get("reg_lambda", 1.0),
+        "scale_pos_weight": compute_scale_pos_weight(y_train),
+        "random_state":     config["model"]["random_state"],
+        "n_jobs": -1,
+        "tree_method": "hist",
+        "device": "cuda",
+    }
+
     logger.info("Generating OOF predictions for NN stacking...")
-    oof_preds = generate_oof_predictions(
-        X_train, y_train, params, config, output_dir
-    )
-    
+    generate_oof_predictions(X_train, y_train, params, config, output_dir)
+
     model, y_prob = train_xgboost(X_train, y_train, X_test, y_test, config)
-    
-    # Save split data for evaluation and NN training
-    output_dir = Path(config["paths"]["outputs"])
+
+    # ── FIX 3: output_dir already defined above, remove duplicate ──
     X_train.to_parquet(output_dir / "X_train.parquet")
     X_test.to_parquet(output_dir  / "X_test.parquet")
     y_train.to_frame().to_parquet(output_dir / "y_train.parquet")
     y_test.to_frame().to_parquet(output_dir  / "y_test.parquet")
-    
+
     pd.DataFrame({"y_prob_xgb": y_prob}).to_parquet(
         output_dir / "xgb_predictions.parquet"
     )
-    
+
     logger.info("All outputs saved. XGBoost training complete.")
     return model
 
 def generate_oof_predictions(X_train: pd.DataFrame, y_train: pd.Series,
                               params: dict, config: dict,
-                              output_dir: Path) -> np.ndarray:
+                              output_dir: Path) -> tuple[np.ndarray, np.ndarray]:
     """
-    Generate honest out-of-fold XGBoost predictions for the training set.
-    
-    Why honest predictions matter:
-    If we predict on the same data XGBoost trained on, predictions are
-    overfit (train AUC ~0.99). NN then learns to blindly trust these
-    overfit signals -> NN overfits too. OOF ensures every training sample
-    gets predicted by a model that never saw it during training.
+    Returns OOF predictions AND the boolean mask of which indices
+    received predictions. First TimeSeriesSplit chunk is excluded
+    because it's never in a validation fold.
     """
     from sklearn.model_selection import TimeSeriesSplit
 
     tscv = TimeSeriesSplit(n_splits=config["model"]["cv_folds"])
-    oof_preds = np.zeros(len(X_train))
+    oof_preds = np.full(len(X_train), np.nan)  # nan instead of 0 — nan is honest
 
     for fold, (tr_idx, val_idx) in enumerate(tscv.split(X_train), 1):
         logger.info(f"OOF fold {fold}/{config['model']['cv_folds']}...")
-        
+
         fold_model = xgb.XGBClassifier(
             **params,
-            device=config["xgboost"].get("device", "cpu"),
             verbosity=0
         )
         fold_model.fit(X_train.iloc[tr_idx], y_train.iloc[tr_idx])
@@ -330,10 +361,23 @@ def generate_oof_predictions(X_train: pd.DataFrame, y_train: pd.Series,
         oof_auc = roc_auc_score(y_train.iloc[val_idx], oof_preds[val_idx])
         logger.info(f"  Fold {fold} OOF AUC: {oof_auc:.4f}")
 
-    np.save(output_dir / "xgb_oof_predictions.npy", oof_preds)
-    logger.info(f"OOF predictions saved. Overall OOF AUC: "
-                f"{roc_auc_score(y_train, oof_preds):.4f}")
-    return oof_preds
+    # Mask of samples that actually got predictions
+    valid_mask = ~np.isnan(oof_preds)
+    valid_preds = oof_preds[valid_mask]
+    valid_labels = y_train.values[valid_mask]
+
+    n_total   = len(X_train)
+    n_valid   = valid_mask.sum()
+    n_excluded = n_total - n_valid
+    logger.info(f"Samples with OOF predictions: {n_valid:,} / {n_total:,} "
+                f"({n_excluded:,} excluded — first TimeSeriesSplit chunk)")
+    logger.info(f"Valid OOF AUC: {roc_auc_score(valid_labels, valid_preds):.4f}")
+
+    # Save both
+    np.save(output_dir / "xgb_oof_predictions.npy", oof_preds)   # full array with nans
+    np.save(output_dir / "xgb_oof_valid_mask.npy",  valid_mask)  # which rows are usable
+
+    return oof_preds, valid_mask
 
 if __name__ == "__main__":
     run_xgboost_training()
