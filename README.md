@@ -11,12 +11,16 @@ SHAP-based explainability.
 | Model | Test AUC | AUC-PR | Brier Score |
 |---|---|---|---|
 | XGBoost (Stage 1) | 0.9168 | — | — |
-| Neural Network (Stage 2) | 0.9184 | 0.4646 | 0.0653 |
-| Ensemble | — | — | — |
+| Neural Network (Stage 2, stacked) | **0.9184** | **0.4653** | **0.0637** |
 
-AUC-PR of **0.465 at a 7.8% positive rate** represents 6× improvement over a
-random classifier — the operationally relevant metric for imbalanced credit risk
-datasets.
+**McNemar's Test**: χ²=194.76, p<0.0001 — NN improvement over XGBoost is statistically significant.
+
+**Bootstrap 95% CI** on AUC gain: [+0.0006, +0.0011] — tight, consistent improvement.
+
+**PSI**: 60/60 months stable — no feature distribution drift detected across the evaluation window.
+
+AUC-PR of **0.4653 at a 7.8% positive rate** represents 6× improvement over a
+random classifier (baseline = 0.078) — the operationally relevant metric for imbalanced credit risk datasets.
 
 ---
 
@@ -62,7 +66,7 @@ Lending Club Dataset (2012–2019, 2.2M rows)
   │  Input dim: 60 features + 1 XGB logit    │
   │  BatchNorm · Dropout · BCE + pos_weight  │
   │  Early stopping on validation AUC        │
-  │  Test AUC: 0.9184 | AUC-PR: 0.4646      │
+  │  Test AUC: 0.9184 | AUC-PR: 0.4653      │
   └──────────────────┬───────────────────────┘
                      ↓
        Weighted Ensemble (XGB + NN)
@@ -178,11 +182,25 @@ Loan-Risk-Intelligence/
 ## Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/lending-club-risk
-cd lending-club-risk
-pip install -r requirements.txt
-# Place Lending Club CSV in data/raw/
-jupyter notebook notebooks/main.ipynb
+git clone https://github.com/Divyanshb30/Loan-Risk-Intelligence
+cd Loan-Risk-Intelligence
+pip install -r requirement.txt
+# Place P2P_Macro_Data.dta in data/raw/
+
+# 1. Run preprocessing
+python -m src.data.preprocess
+
+# 2. Train XGBoost (generates OOF predictions)
+python -m src.models.train_xgboost
+
+# 3. Train Neural Network (stacks XGB logit)
+python -m src.models.train_nn
+
+# 4. Start API
+uvicorn src.api.main:app --reload
+
+# 5. Launch dashboard (separate terminal)
+streamlit run src/dashboard/app.py
 ```
 
 ---
@@ -192,12 +210,13 @@ jupyter notebook notebooks/main.ipynb
 - [x] Preprocessing + feature engineering — 1,802,285 records
 - [x] Residualized macro features — FEDFUNDS, CPI, UNRATE
 - [x] XGBoost — OOF AUC 0.9168
-- [x] PyTorch Neural Network — Test AUC 0.9184, AUC-PR 0.4646
+- [x] PyTorch Neural Network — Test AUC 0.9184, AUC-PR 0.4653, Brier 0.0637
 - [x] 2016 regime shift diagnosis + year-stratified split
-- [ ] Ensemble + McNemar\'s Test + Bootstrap CI
-- [ ] SHAP explainability
-- [ ] PSI + KS drift detection
-- [ ] FastAPI endpoint
-- [ ] Streamlit dashboard
+- [x] McNemar's Test — χ²=194.76, p<0.0001
+- [x] Bootstrap CI — [+0.0006, +0.0011] on AUC gain
+- [x] PSI drift detection — 60/60 months stable
+- [x] FastAPI endpoint — POST /predict with SHAP drivers
+- [x] Streamlit dashboard — live risk assessment UI
+- [ ] SHAP beeswarm + waterfall plots
 - [ ] Phase 2: LLM explanation layer (Qwen 2.5-3B + LoRA)
 '''
