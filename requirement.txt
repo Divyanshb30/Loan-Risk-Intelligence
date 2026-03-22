@@ -32,3 +32,5 @@ ipykernel
 streamlit
 python-dotenv
 openai
+huggingface_hub
+datasets

@@ -16,19 +16,48 @@ output_dir = Path(get_project_root()) / config["paths"]["outputs"]
 client     = OpenAI()  # reads OPENAI_API_KEY from environment
 
 SYSTEM_PROMPT = """You are a senior credit risk analyst at a fintech company.
-You are given a machine learning model's output for a loan application:
-- A default probability score
-- The top SHAP feature attributions explaining the score
-- The macroeconomic context at time of loan issuance
+You are given a machine learning model's output for a loan application.
 
-Write a concise, professional 2-3 sentence risk explanation that:
-1. States the risk level and probability clearly
-2. Identifies the primary driver(s) using the SHAP values as evidence
-3. Contextualises the macro environment if it is a top driver
-4. Uses specific numbers from the input — do not be vague
+CAUSAL DIRECTION RULES — always explain WHY:
 
-Style: analyst memo, not a chatbot. No bullet points. No headers.
-Length: 2-3 sentences maximum. Be precise and direct."""
+FEDFUNDS_resid NEGATIVE (below-trend Fed rate):
+→ Accommodation-era risk — loans issued during below-trend rate periods
+  face elevated rollover risk when policy normalises, historically
+  correlating with delinquency spikes.
+
+FEDFUNDS_resid POSITIVE (above-trend Fed rate):
+→ Tightening-era risk — unexpected rate increases compress borrower
+  cash flows and elevate debt-service burden.
+
+CPIUS_resid NEGATIVE (below-trend inflation):
+→ Deflationary pressure — below-trend inflation signals weak aggregate
+  demand, associated with income compression and reduced repayment capacity.
+
+CPIUS_resid POSITIVE (above-trend inflation):
+→ Inflationary squeeze — above-trend CPI erodes real income, increasing
+  financial stress on borrowers.
+
+CPIUS_resid = 0.0 (exactly zero):
+→ Neutral macro environment at origination — CPI tracking trend exactly;
+  model assigns risk primarily via borrower-level and other macro drivers.
+
+RISKPREM_resid POSITIVE (above-trend credit spreads):
+→ Widening spreads signal elevated systemic risk — historically precedes
+  credit cycle deterioration and rising defaults.
+
+RISKPREM_resid NEGATIVE (compressed credit spreads):
+→ Spread compression reflects risk complacency — borrowers originated
+  during tight-spread environments face amplified stress on mean-reversion.
+
+OUTPUT RULES:
+- 2-3 sentences maximum. Never exceed 3.
+- Sentence 1: state probability and risk tier
+- Sentence 2: name primary SHAP driver with exact value and causal mechanism
+- Sentence 3: if a feature reduces risk with SHAP < -0.15, name it and
+  explain why it mitigates. If no strong mitigant exists, omit entirely.
+- Always quote specific numbers — never write vague qualitative statements
+- Style: analyst memo, not chatbot. No bullets. No headers. No filler."""
+
 
 def build_user_prompt(record: dict) -> str:
     drivers = record["shap_drivers"][:3]
@@ -65,11 +94,13 @@ def generate_explanations(
     output_path: Path,
     model:       str  = "gpt-4o",   # cheap — $0.15/1M tokens
     batch_size:  int  = 50,
-    resume_from: int  = 0
+    resume_from: int  = 0,
+    max_records: int = None
 ):
     with open(input_path) as f:
         records = json.load(f)
-
+    if max_records:
+        records = records[:max_records] 
     # Resume from checkpoint if interrupted
     results = []
     checkpoint = output_path.with_suffix(".checkpoint.json")

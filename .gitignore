@@ -5,6 +5,14 @@ data/outputs/
 *.dta
 *.parquet
 *.csv
+model2_llm/
+mlruns/
+loanvenv/
+data/raw/
+data/outputs/*.parquet
+data/outputs/*.npy
+data/outputs/*.pt
+data/outputs/*.json
 
 # MLflow
 mlruns/
