@@ -1,3 +1,8 @@
+# Un-ignore deploy artifacts (small model files, needed for deployment)
+!deploy/artifacts/
+!deploy/artifacts/*
+
+
 # Data files - never commit these
 data/raw/
 data/processed/
@@ -13,6 +18,37 @@ data/outputs/*.parquet
 data/outputs/*.npy
 data/outputs/*.pt
 data/outputs/*.json
+# Virtual environment
+loanvenv/
+
+# Raw & processed data (too large)
+data/raw/
+data/processed/
+
+# Large output files (exceed GitHub 100MB limit)
+data/outputs/X_train.parquet
+data/outputs/shap_values.npy
+
+# MLflow
+mlflow.db
+mlruns/
+
+# Logs
+logs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Env
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+
 
 # MLflow
 mlruns/
