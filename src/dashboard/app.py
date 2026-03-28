@@ -206,8 +206,8 @@ with right:
         tier  = result["risk_tier"]
         shaps = result["top_shap_drivers"]
 
-        badge_class = {"High": "risk-badge-high", "Medium": "risk-badge-medium", "Low": "risk-badge-low"}[tier]
-        prob_color  = {"High": "#ef4444", "Medium": "#f59e0b", "Low": "#10b981"}[tier]
+        badge_class = {"Very High": "risk-badge-high", "High": "risk-badge-high", "Medium": "risk-badge-medium", "Low": "risk-badge-low"}
+        prob_color  = {"Very High": "#ef4444", "High": "#ef4444", "Medium": "#f59e0b", "Low": "#22c55e"}[tier]
 
         r1, r2 = st.columns([1, 1], gap="medium")
 
