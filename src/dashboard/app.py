@@ -271,10 +271,8 @@ Low &lt;30% &nbsp;·&nbsp; Medium 30–60% &nbsp;·&nbsp; High &gt;60%
             height=220, margin=dict(t=20, b=0, l=20, r=20),
             paper_bgcolor="#111827", font_color="#e2e8f0"
         )
-        st.markdown('<div class="card" style="margin-top:1rem;">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">Risk Gauge</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-title" style="margin-top:1rem;">Risk Gauge</div>', unsafe_allow_html=True)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown('</div>', unsafe_allow_html=True)
 
         # ── Macro context ──────────────────────────────────────
         st.markdown('<div class="section-label" style="margin-top:1.5rem;">Macro Context</div>',
