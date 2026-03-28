@@ -117,8 +117,18 @@ def get_risk_tier(p: float) -> str:
 @app.post("/predict", response_model=PredictionResponse)
 def predict(loan: LoanFeatures):
     try:
+        # ── Normalise user inputs to training-data conventions ───────────
+        user = dict(loan.features)
+        # int_rate: training uses APR as a fraction (e.g. 0.125 = 12.5%).
+        if "int_rate" in user and user["int_rate"] > 1.0:
+            user["int_rate"] = user["int_rate"] / 100.0
+
+        # revol_util: training uses 0–1 (fraction). UIs often send 0–100; raw 50 → ~200σ → NN saturates.
+        if "revol_util" in user and user["revol_util"] > 1.0:
+            user["revol_util"] = user["revol_util"] / 100.0
+
         # Fill missing features with training medians, then align column order
-        full_features = {**MEDIANS, **loan.features}
+        full_features = {**MEDIANS, **user}
         row = pd.DataFrame([full_features]).reindex(columns=FEATURE_COLS)
 
         # ── Stage 1: XGBoost ─────────────────────────────────────────────────
