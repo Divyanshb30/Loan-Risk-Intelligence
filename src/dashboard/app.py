@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import plotly.graph_objects as go
 import os
+import textwrap
 from datetime import datetime
 
 # ── Config ────────────────────────────────────────────────────
@@ -213,18 +214,17 @@ with right:
 
         # ── Probability card ──────────────────────────────────
         with r1:
-            st.markdown(f"""
-            <div class="card" style="text-align:center; padding:2rem;">
-                <div class="card-title">Default Probability</div>
-                <div class="prob-display" style="color:{prob_color};">{prob:.1%}</div>
-                <br>
-                <span class="{badge_class}">{tier} Risk</span>
-                <br><br>
-                <div style="font-size:0.8rem; color:#6b7280;">
-                    Low &lt;30% &nbsp;·&nbsp; Medium 30–60% &nbsp;·&nbsp; High &gt;60%
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(textwrap.dedent(f"""\
+<div class="card" style="text-align:center; padding:2rem;">
+<div class="card-title">Default Probability</div>
+<div class="prob-display" style="color:{prob_color};">{prob:.1%}</div>
+<br>
+<span class="{badge_class[tier]}">{tier} Risk</span>
+<br><br>
+<div style="font-size:0.8rem; color:#6b7280;">
+Low &lt;30% &nbsp;·&nbsp; Medium 30–60% &nbsp;·&nbsp; High &gt;60%
+</div>
+</div>"""), unsafe_allow_html=True)
 
         # ── SHAP drivers card ─────────────────────────────────
         with r2:
@@ -232,21 +232,23 @@ with right:
             for d in shaps:
                 val_class = "driver-val-pos" if d["direction"] == "increases_risk" else "driver-val-neg"
                 sign = "+" if d["direction"] == "increases_risk" else ""
-                drivers_html += f"""
-                <div class="driver-row">
-                    <span class="driver-name">{d['feature']}</span>
-                    <span class="{val_class}">{sign}{d['shap_value']:.4f}</span>
-                </div>"""
+                drivers_html += (
+                    f'<div class="driver-row">'
+                    f'<span class="driver-name">{d["feature"]}</span>'
+                    f'<span class="{val_class}">{sign}{d["shap_value"]:.4f}</span>'
+                    f'</div>'
+                )
 
-            st.markdown(f"""
-            <div class="card">
-                <div class="card-title">Top SHAP Drivers</div>
-                {drivers_html}
-                <div style="font-size:0.72rem; color:#4b5563; margin-top:0.8rem;">
-                    🔴 increases default risk &nbsp; 🟢 reduces default risk
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="card">'
+                f'<div class="card-title">Top SHAP Drivers</div>'
+                f'{drivers_html}'
+                f'<div style="font-size:0.72rem; color:#4b5563; margin-top:0.8rem;">'
+                f'🔴 increases default risk &nbsp; 🟢 reduces default risk'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
         # ── Gauge ─────────────────────────────────────────────
         fig = go.Figure(go.Indicator(
@@ -291,25 +293,25 @@ with right:
                 tag_class = "macro-tag-up"   if val > 2016 else "macro-tag-down"
                 tag_text  = "post-2016 regime" if val > 2016 else "pre-2016 regime"
 
-            col.markdown(f"""
-            <div class="macro-pill">
-                <div class="macro-label">{label}</div>
-                <div class="macro-value">{fmt}</div>
-                <div class="{tag_class}">{tag_text}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            col.markdown(
+                f'<div class="macro-pill">'
+                f'<div class="macro-label">{label}</div>'
+                f'<div class="macro-value">{fmt}</div>'
+                f'<div class="{tag_class}">{tag_text}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
     else:
-        st.markdown("""
-        <div class="card" style="text-align:center; padding:4rem 2rem; min-height:400px;
-             display:flex; flex-direction:column; align-items:center; justify-content:center;">
-            <div style="font-size:3rem; margin-bottom:1rem;">🔍</div>
-            <div style="font-size:1.1rem; color:#6b7280; font-weight:500;">
-                Configure loan parameters and click<br>
-                <span style="color:#3b82f6;">Assess Risk →</span> to generate a prediction
-            </div>
-            <div style="margin-top:2rem; font-size:0.8rem; color:#374151;">
-                Model: XGBoost + PyTorch NN &nbsp;·&nbsp; Test AUC 0.9184 &nbsp;·&nbsp; McNemar p&lt;0.0001
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(textwrap.dedent("""\
+<div class="card" style="text-align:center; padding:4rem 2rem; min-height:400px;
+     display:flex; flex-direction:column; align-items:center; justify-content:center;">
+<div style="font-size:3rem; margin-bottom:1rem;">🔍</div>
+<div style="font-size:1.1rem; color:#6b7280; font-weight:500;">
+Configure loan parameters and click<br>
+<span style="color:#3b82f6;">Assess Risk →</span> to generate a prediction
+</div>
+<div style="margin-top:2rem; font-size:0.8rem; color:#374151;">
+Model: XGBoost + PyTorch NN &nbsp;·&nbsp; Test AUC 0.9184 &nbsp;·&nbsp; McNemar p&lt;0.0001
+</div>
+</div>"""), unsafe_allow_html=True)
